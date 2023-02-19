@@ -1,3 +1,4 @@
 .idea
-config.yaml
-openai-tg-bot
+/*.txt
+/config.yaml
+/openai-tg-bot
