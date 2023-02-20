@@ -182,8 +182,9 @@ func main() {
 		aiPart := "AI: " + response + endSequence + "\n"
 		saveToHistory(userName, humanPart, aiPart)
 
-		// Instead, prefer a context short-hand:
-		return c.Send(response)
+		return c.Send(response, &tele.SendOptions{
+			ReplyTo: c.Message(),
+		})
 	})
 
 	theBot.Start()
