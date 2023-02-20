@@ -20,7 +20,7 @@ var (
 		MaxTokens:   512,
 		HistorySize: 1024,
 	}
-	endSequence = "@END"
+	endSequence = " ␃"
 )
 
 // Config is an application configuration structure
@@ -84,7 +84,7 @@ func main() {
 
 	pref := tele.Settings{
 		Token:  gCfg.BotApiKey,
-		Poller: &tele.LongPoller{Timeout: 10 * time.Second},
+		Poller: &tele.LongPoller{Timeout: 60 * time.Second},
 	}
 
 	theBot, err := tele.NewBot(pref)
@@ -174,7 +174,8 @@ func main() {
 			log.Println("Error:", err)
 			response = err.Error()
 		} else {
-			log.Println("OPENAI API RESPONSE:", strings.Trim(resp.Choices[0].Text, "\n"), err)
+			log.Println("OPENAI API RESPONSE:")
+			PfGreen(strings.Trim(resp.Choices[0].Text, "\n"))
 			response = strings.Trim(resp.Choices[0].Text, "\n")
 		}
 
