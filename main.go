@@ -3,12 +3,13 @@ package main
 import (
 	"context"
 	"github.com/PullRequestInc/go-gpt3"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/ilyakaznacheev/cleanenv"
+	tele "gopkg.in/telebot.v3"
 	"log"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -78,88 +79,112 @@ func clearHistory(userName string) {
 
 func main() {
 	InitConfig()
-	client := gpt3.NewClient(gCfg.OpenAiKey, gpt3.WithDefaultEngine(gpt3.TextDavinci003Engine))
-	bot, err := tgbotapi.NewBotAPI(gCfg.BotApiKey)
-	if err != nil {
-		log.Panic(err)
-	}
-	bot.Debug = false
-	log.Printf("Authorized on account %s", bot.Self.UserName)
 
-	u := tgbotapi.NewUpdate(0)
-	u.Timeout = 10
-	updates := bot.GetUpdatesChan(u)
+	client := gpt3.NewClient(gCfg.OpenAiKey, gpt3.WithDefaultEngine(gpt3.TextDavinci003Engine))
+
+	pref := tele.Settings{
+		Token:  gCfg.BotApiKey,
+		Poller: &tele.LongPoller{Timeout: 10 * time.Second},
+	}
+
+	theBot, err := tele.NewBot(pref)
+	if err != nil {
+		log.Fatal(err)
+		return
+	}
+
+	log.Printf("Authorized on Telegram bot account @%s", theBot.Me.Username)
+
+	err = theBot.SetCommands([]tele.Command{{
+		Text:        "start",
+		Description: "Start new conversation",
+	}, {
+		Text:        "help",
+		Description: "Help and instructions",
+	}, {
+		Text:        "hist",
+		Description: "Conversation history",
+	}})
+	if err != nil {
+		log.Fatal(err)
+		return
+	}
+
+	theBot.Handle("/help", func(c tele.Context) error {
+		return c.Send("I understand commands /start and /hist.")
+	})
+
+	theBot.Handle("/hist", func(c tele.Context) error {
+		var (
+			user = c.Sender()
+		)
+		userName := strconv.Itoa(int(user.ID)) + "-" + user.Username
+		hist := getHistory(userName)
+		if hist == "" {
+			return c.Send("_(empty)_", &tele.SendOptions{
+				ParseMode: "markdown",
+			})
+		} else {
+			resp := hist
+			resp += "\n======\n"
+			resp += "Length in runes: " + strconv.Itoa(utf8.RuneCountInString(hist)) + "\n"
+			resp += "History size limit: " + strconv.Itoa(gCfg.HistorySize) + "\n"
+			return c.Send(resp)
+		}
+	})
+
+	theBot.Handle("/start", func(c tele.Context) error {
+		var (
+			user = c.Sender()
+		)
+		userName := strconv.Itoa(int(user.ID)) + "-" + user.Username
+		clearHistory(userName)
+		return c.Send("History cleared")
+	})
 
 	ctx := context.Background()
-	for update := range updates {
+	theBot.Handle(tele.OnText, func(c tele.Context) error {
+		// All the text messages that weren't
+		// captured by existing handlers.
 
-		if update.Message != nil && update.Message.IsCommand() { // commands
-			// Create a new MessageConfig. We don't have text yet,
-			// so we leave it empty.
-			msg := tgbotapi.NewMessage(update.Message.Chat.ID, "")
-			userName := strconv.Itoa(int(update.Message.From.ID)) + "-" + update.Message.From.UserName
+		var (
+			user = c.Sender()
+			text = c.Text()
+		)
 
-			// Extract the command from the Message.
-			switch update.Message.Command() {
-			case "help":
-				msg.Text = "I understand commands /start and /hist."
-			case "start":
-				clearHistory(userName)
-				msg.Text = "History cleared"
-			case "hist":
-				hist := getHistory(userName)
-				if hist == "" {
-					msg.Text = "_(empty)_"
-					msg.ParseMode = "markdown"
-				} else {
-					msg.Text = hist
-					msg.Text += "\n======\n"
-					msg.Text += "Length in runes: " + strconv.Itoa(utf8.RuneCountInString(hist)) + "\n"
-					msg.Text += "History size limit: " + strconv.Itoa(gCfg.HistorySize) + "\n"
-				}
-			default:
-				msg.Text = "I don't know that command"
-			}
+		log.Printf("[%s] %s", user.Username, text)
+		c.Notify(tele.Typing)
 
-			if _, err := bot.Send(msg); err != nil {
-				log.Println("error:", err)
-			}
-			continue
+		userName := strconv.Itoa(int(user.ID)) + "-" + user.Username
+
+		history := getHistory(userName)
+		humanPart := "Human: " + text + endSequence + "\n"
+
+		log.Println("SENDING TO OPENAI API:")
+		PfBlue(history + humanPart)
+		resp, err := client.Completion(ctx, gpt3.CompletionRequest{
+			Prompt:      []string{history + humanPart + "AI: "},
+			MaxTokens:   gpt3.IntPtr(gCfg.MaxTokens),
+			Temperature: gpt3.Float32Ptr(gCfg.Temperature),
+			Stop:        []string{endSequence},
+		})
+
+		response := ""
+		if err != nil {
+			log.Println("Error:", err)
+			response = err.Error()
+		} else {
+			log.Println("OPENAI API RESPONSE:", strings.Trim(resp.Choices[0].Text, "\n"), err)
+			response = strings.Trim(resp.Choices[0].Text, "\n")
 		}
 
-		if update.Message != nil { // If we got normal a message
-			log.Printf("[%s] %s", update.Message.From.UserName, update.Message.Text)
-			typingMsg := tgbotapi.NewChatAction(update.Message.Chat.ID, "typing")
-			bot.Send(typingMsg)
+		aiPart := "AI: " + response + endSequence + "\n"
+		saveToHistory(userName, humanPart, aiPart)
 
-			userName := strconv.Itoa(int(update.Message.From.ID)) + "-" + update.Message.From.UserName
+		// Instead, prefer a context short-hand:
+		return c.Send(response)
+	})
 
-			history := getHistory(userName)
-			humanPart := "Human: " + update.Message.Text + endSequence + "\n"
+	theBot.Start()
 
-			log.Println("SENDING TO API:", history+humanPart)
-			resp, err := client.Completion(ctx, gpt3.CompletionRequest{
-				Prompt:      []string{history + humanPart + "AI: "},
-				MaxTokens:   gpt3.IntPtr(gCfg.MaxTokens),
-				Temperature: gpt3.Float32Ptr(gCfg.Temperature),
-				Stop:        []string{endSequence},
-			})
-
-			response := ""
-			if err != nil {
-				log.Println("Error:", err)
-				response = err.Error()
-			} else {
-				log.Println("GPT RESPONSE:", strings.Trim(resp.Choices[0].Text, "\n"), err)
-				response = strings.Trim(resp.Choices[0].Text, "\n")
-			}
-
-			aiPart := "AI: " + response + endSequence + "\n"
-			saveToHistory(userName, humanPart, aiPart)
-
-			msg := tgbotapi.NewMessage(update.Message.Chat.ID, response)
-			msg.ReplyToMessageID = update.Message.MessageID
-			bot.Send(msg)
-		}
-	}
 }
