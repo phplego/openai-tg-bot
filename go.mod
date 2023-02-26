@@ -3,9 +3,10 @@ module openai-tg-bot
 go 1.19
 
 require (
-	github.com/PullRequestInc/go-gpt3 v1.1.11
 	github.com/ilyakaznacheev/cleanenv v1.4.2
+	github.com/sashabaranov/go-gpt3 v1.2.1
 	gopkg.in/telebot.v3 v3.1.2
+	gopkg.in/yaml.v2 v2.4.0
 )
 
 require (

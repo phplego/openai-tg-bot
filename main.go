@@ -2,9 +2,10 @@ package main
 
 import (
 	"context"
-	"github.com/PullRequestInc/go-gpt3"
 	"github.com/ilyakaznacheev/cleanenv"
+	gogpt "github.com/sashabaranov/go-gpt3"
 	tele "gopkg.in/telebot.v3"
+	"gopkg.in/yaml.v2"
 	"log"
 	"os"
 	"strconv"
@@ -25,8 +26,8 @@ var (
 
 // Config is an application configuration structure
 type Config struct {
-	OpenAiKey   string  `yaml:"open-ai-key"`
-	BotApiKey   string  `yaml:"bot-api-key"`
+	OpenAiKey   string  `yaml:"open-ai-key,omitempty"`
+	BotApiKey   string  `yaml:"bot-api-key,omitempty"`
 	Temperature float32 `yaml:"temperature"`
 	MaxTokens   int     `yaml:"max-tokens"`
 	HistorySize int     `yaml:"history-size"`
@@ -80,7 +81,7 @@ func clearHistory(userName string) {
 func main() {
 	InitConfig()
 
-	client := gpt3.NewClient(gCfg.OpenAiKey, gpt3.WithDefaultEngine(gpt3.TextDavinci003Engine))
+	openAiClient := gogpt.NewClient(gCfg.OpenAiKey)
 
 	pref := tele.Settings{
 		Token:  gCfg.BotApiKey,
@@ -101,6 +102,9 @@ func main() {
 	}, {
 		Text:        "help",
 		Description: "Help and instructions",
+	}, {
+		Text:        "config",
+		Description: "Show config params",
 	}, {
 		Text:        "hist",
 		Description: "Conversation history",
@@ -133,6 +137,21 @@ func main() {
 		}
 	})
 
+	theBot.Handle("/config", func(c tele.Context) error {
+		resp := ""
+		resp += "*CONFIG*\n"
+		var cfgCopy = gCfg
+		cfgCopy.OpenAiKey = ""
+		cfgCopy.BotApiKey = ""
+		bytes, _ := yaml.Marshal(cfgCopy)
+		resp += "```\n"
+		resp += string(bytes)
+		resp += "```\n"
+		return c.Send(resp, &tele.SendOptions{
+			ParseMode: "markdown",
+		})
+	})
+
 	theBot.Handle("/start", func(c tele.Context) error {
 		var (
 			user = c.Sender()
@@ -162,22 +181,27 @@ func main() {
 
 		log.Println("SENDING TO OPENAI API:")
 		PfBlue(history + humanPart)
-		resp, err := client.Completion(ctx, gpt3.CompletionRequest{
-			Prompt:      []string{history + humanPart + "AI: "},
-			MaxTokens:   gpt3.IntPtr(gCfg.MaxTokens),
-			Temperature: gpt3.Float32Ptr(gCfg.Temperature),
+		req := gogpt.CompletionRequest{
+			Model:       gogpt.GPT3TextDavinci003,
+			MaxTokens:   gCfg.MaxTokens,
+			Prompt:      history + humanPart + "AI: ",
+			Temperature: gCfg.Temperature,
 			Stop:        []string{endSequence},
-		})
+		}
 
 		response := ""
+
+		completionResponse, err := openAiClient.CreateCompletion(ctx, req)
 		if err != nil {
 			log.Println("Error:", err)
 			response = err.Error()
 		} else {
 			log.Println("OPENAI API RESPONSE:")
-			PfGreen(strings.Trim(resp.Choices[0].Text, "\n"))
-			response = strings.Trim(resp.Choices[0].Text, "\n")
+			PfGreen(strings.Trim(completionResponse.Choices[0].Text, "\n") + "\n")
+			response = strings.Trim(completionResponse.Choices[0].Text, "\n")
 		}
+
+		PfYellow("USAGE: %+v \n", completionResponse.Usage)
 
 		aiPart := "AI: " + response + endSequence + "\n"
 		saveToHistory(userName, humanPart, aiPart)
