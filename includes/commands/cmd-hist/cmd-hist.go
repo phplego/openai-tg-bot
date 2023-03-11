@@ -3,7 +3,7 @@ package cmd_hist
 import (
 	tele "gopkg.in/telebot.v3"
 	"openai-tg-bot/includes/config"
-	"openai-tg-bot/includes/history"
+	user_state "openai-tg-bot/includes/user-state"
 	"strconv"
 	"unicode/utf8"
 )
@@ -12,8 +12,8 @@ func Handler(c tele.Context) error {
 	var (
 		user = c.Sender()
 	)
-	userName := strconv.Itoa(int(user.ID)) + "-" + user.Username
-	hist := history.GetHistory(userName)
+	user_state.Load(user.ID)
+	hist := user_state.GetHistory(user.ID)
 	if hist == "" {
 		return c.Send("_(empty)_", &tele.SendOptions{
 			ParseMode: "markdown",

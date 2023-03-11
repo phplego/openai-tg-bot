@@ -5,26 +5,48 @@ import (
 	gogpt "github.com/sashabaranov/go-gpt3"
 	tele "gopkg.in/telebot.v3"
 	"log"
+	"openai-tg-bot/includes/commands"
 	"openai-tg-bot/includes/config"
-	"openai-tg-bot/includes/history"
 	open_ai "openai-tg-bot/includes/open-ai"
 	"openai-tg-bot/includes/printing"
-	"strconv"
+	user_state "openai-tg-bot/includes/user-state"
 	"strings"
 )
 
 func Handler(c tele.Context) error {
 	var (
 		user = c.Sender()
+	)
+
+	user_state.Load(user.ID)
+	userState := user_state.FindById(user.ID)
+
+	switch userState.Mode {
+	case commands.TextMode:
+		return HandleTextMode(c)
+	case commands.ImageMode:
+		return HandleImageMode(c)
+	}
+
+	return nil
+}
+
+func HandleTextMode(c tele.Context) error {
+	var (
+		user = c.Sender()
 		text = c.Text()
 	)
+
+	// load state
+	err := user_state.Load(user.ID)
+	if err != nil {
+		return err
+	}
 
 	log.Printf("[%s] %s", user.Username, text)
 	c.Notify(tele.Typing)
 
-	userName := strconv.Itoa(int(user.ID)) + "-" + user.Username
-
-	hist := history.GetHistory(userName)
+	hist := user_state.GetHistory(user.ID)
 	humanPart := "Human: " + text + config.EndSequence + "\n"
 
 	log.Println("SENDING TO OPENAI API:")
@@ -53,7 +75,34 @@ func Handler(c tele.Context) error {
 	printing.PfYellow("USAGE: %+v \n", completionResponse.Usage)
 
 	aiPart := "AI: " + response + config.EndSequence + "\n"
-	history.SaveToHistory(userName, humanPart, aiPart)
+	user_state.AppendToHistory(user.ID, humanPart, aiPart)
+
+	return c.Send(response, &tele.SendOptions{
+		ReplyTo: c.Message(),
+	})
+}
+
+func HandleImageMode(c tele.Context) error {
+	c.Notify(tele.Typing)
+
+	log.Println("SENDING TO OPENAI API:")
+	printing.PfBlue(c.Text() + "\n")
+	req := gogpt.ImageRequest{
+		Prompt: c.Text(),
+	}
+
+	response := ""
+
+	ctx := context.Background()
+	imageResponse, err := open_ai.OpenAiClient.CreateImage(ctx, req)
+	if err != nil {
+		log.Println("Error:", err)
+		response = err.Error()
+	} else {
+		log.Println("OPENAI API RESPONSE:")
+		printing.PfGreen(strings.Trim(imageResponse.Data[0].URL, "\n") + "\n")
+		response = strings.Trim(imageResponse.Data[0].URL, "\n")
+	}
 
 	return c.Send(response, &tele.SendOptions{
 		ReplyTo: c.Message(),

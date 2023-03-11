@@ -1,30 +1,34 @@
 package main
 
 import (
-	tele "gopkg.in/telebot.v3"
+	"gopkg.in/telebot.v3"
 	"log"
+	"openai-tg-bot/includes/commands"
 	"openai-tg-bot/includes/commands/cmd-config"
 	"openai-tg-bot/includes/commands/cmd-help"
 	"openai-tg-bot/includes/commands/cmd-hist"
 	"openai-tg-bot/includes/commands/cmd-start"
 	"openai-tg-bot/includes/commands/on-text"
 	"openai-tg-bot/includes/config"
-	"openai-tg-bot/includes/history"
 	"openai-tg-bot/includes/open-ai"
+	user_state "openai-tg-bot/includes/user-state"
 	"time"
 )
 
 func main() {
+	// configure logs
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
+
+	// init subpackages
 	config.Init()
-	history.Init(config.Data)
+	user_state.Init(config.Data)
 	open_ai.Init()
 
-	pref := tele.Settings{
+	// init bot
+	theBot, err := telebot.NewBot(telebot.Settings{
 		Token:  config.Data.BotApiKey,
-		Poller: &tele.LongPoller{Timeout: 60 * time.Second},
-	}
-
-	theBot, err := tele.NewBot(pref)
+		Poller: &telebot.LongPoller{Timeout: 60 * time.Second},
+	})
 	if err != nil {
 		log.Fatal(err)
 		return
@@ -32,7 +36,7 @@ func main() {
 
 	log.Printf("Authorized on Telegram bot account @%s", theBot.Me.Username)
 
-	err = theBot.SetCommands([]tele.Command{{
+	commands.AllCommands = []telebot.Command{{
 		Text:        "start",
 		Description: "Start new conversation",
 	}, {
@@ -42,9 +46,17 @@ func main() {
 		Text:        "hist",
 		Description: "Conversation history",
 	}, {
+		Text:        "image",
+		Description: "Switch to Image Mode",
+	}, {
+		Text:        "text",
+		Description: "Switch to Text Mode",
+	}, {
 		Text:        "help",
 		Description: "Help and instructions",
-	}})
+	}}
+
+	err = theBot.SetCommands(commands.AllCommands)
 
 	if err != nil {
 		log.Fatal(err)
@@ -55,9 +67,25 @@ func main() {
 	theBot.Handle("/hist", cmd_hist.Handler)
 	theBot.Handle("/config", cmd_config.Handler)
 	theBot.Handle("/help", cmd_help.Handler)
+	theBot.Handle("/image", func(context telebot.Context) error {
+		user_state.Load(context.Sender().ID)
+		state := user_state.FindById(context.Sender().ID)
+		state.Mode = commands.ImageMode
+		user_state.Save(context.Sender().ID, state)
+		return context.Send("Switched to image generation mode")
+
+	})
+	theBot.Handle("/text", func(context telebot.Context) error {
+		user_state.Load(context.Sender().ID)
+		state := user_state.FindById(context.Sender().ID)
+		state.Mode = commands.TextMode
+		user_state.Save(context.Sender().ID, state)
+		return context.Send("Switched to text completion mode")
+	})
 
 	// All the text messages that weren't captured by existing handlers.
-	theBot.Handle(tele.OnText, on_text.Handler)
+	// The handling depends on 'mode' (text, image)
+	theBot.Handle(telebot.OnText, on_text.Handler)
 
 	theBot.Start()
 }
